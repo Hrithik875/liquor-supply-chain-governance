@@ -1,8 +1,5 @@
 
 
-***
-
-```markdown
 # 🏭 AI-Enabled Liquor Supply Chain Governance System
 
 **Real-time monitoring, anomaly detection, and compliance tracking for liquor supply chains using machine learning and government data.**
