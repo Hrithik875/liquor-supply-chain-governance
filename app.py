@@ -53,8 +53,20 @@ with st.sidebar:
     
     selected_module = st.selectbox(
         "Select Module:",
-        ["🏠 Dashboard", "📊 Sales Analysis", "🔍 Anomaly Detection", "🗺️ Geographic Distribution", "📈 Trends", "📋 Raw Data"]
+        [
+            "🏠 Dashboard",
+            "📊 Sales Analysis",
+            "🔍 Anomaly Detection",
+            "🗺️ Geographic Distribution",
+            "📈 Trends",
+            "📋 Raw Data",
+            "---OPERATIONAL---",
+            "🚛 Live Tracking",
+            "🏭 Production Compliance",
+            "✅ Label Authenticity",
+        ]
     )
+
     
     st.divider()
     
@@ -501,6 +513,306 @@ elif selected_module == "📋 Raw Data":
         )
     else:
         st.warning("No data available to explore.")
+    # ==================== NEW MODULES: OPERATIONAL SUPPLY CHAIN ====================
+
+elif selected_module == "🚛 Live Tracking":
+    st.header("🚛 Live Vehicle Tracking & Geofencing")
+    st.markdown("**Real-time tracking to prevent route deviation and unauthorized diversions**")
+    
+    from simulation_engine import get_simulator
+    sim = get_simulator()
+    
+    truck_fleet = sim.generate_truck_fleet()
+    compliance = sim.calculate_route_compliance(truck_fleet)
+    
+    # KPIs
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        in_transit = len(truck_fleet[truck_fleet['status'] == 'In Transit'])
+        st.metric("Vehicles In Transit", in_transit)
+    
+    with col2:
+        high_risk = len(compliance[compliance['alert_type'] == 'HIGH_RISK'])
+        st.metric("⚠️ High Risk Alerts", high_risk, delta=f"{high_risk} need attention")
+    
+    with col3:
+        total_cargo = truck_fleet['cargo_liters'].sum()
+        st.metric("Total Cargo", f"{total_cargo/1e6:.2f}M L")
+    
+    with col4:
+        compliance_rate = (len(compliance[compliance['is_compliant']]) / len(compliance)) * 100
+        st.metric("Compliance Rate", f"{compliance_rate:.1f}%")
+    
+    st.divider()
+    
+    # Live Map
+    st.subheader("📍 Live Fleet Map")
+    
+    m = folium.Map(
+        location=[15.3173, 75.7139],
+        zoom_start=7,
+        tiles="OpenStreetMap"
+    )
+    
+    for _, truck in truck_fleet.iterrows():
+        color = 'red' if truck['is_deviating'] else 'green'
+        icon_text = '⚠️ DEVIATED' if truck['is_deviating'] else '✓ ON ROUTE'
+        
+        folium.CircleMarker(
+            location=[truck['lat'], truck['lon']],
+            radius=8,
+            popup=f"{truck['truck_id']}\n{icon_text}\nCargo: {truck['cargo_liters']/1000:.1f}K L\nSpeed: {truck['speed_kmh']:.0f} km/h",
+            color=color,
+            fill=True,
+            fillColor=color,
+            fillOpacity=0.7,
+            weight=2
+        ).add_to(m)
+    
+    st_folium(m, width=800, height=500)
+    
+    st.divider()
+    
+    # Compliance Table
+    st.subheader("Compliance Report")
+    
+    compliance_display = compliance.copy()
+    compliance_display['status_badge'] = compliance_display['alert_type'].apply(
+        lambda x: '✅ COMPLIANT' if x == 'NORMAL' else f'⚠️ {x}'
+    )
+    
+    st.dataframe(
+        compliance_display[['truck_id', 'status', 'cargo_liters', 'deviation_km', 'risk_score', 'status_badge']],
+        use_container_width=True
+    )
+    
+    # Risk Summary
+    st.subheader("📊 Risk Analysis")
+    
+    risk_dist = compliance['alert_type'].value_counts()
+    
+    fig = px.bar(
+        x=risk_dist.index,
+        y=risk_dist.values,
+        title="Alert Distribution",
+        labels={'x': 'Risk Level', 'y': 'Count'},
+        color=risk_dist.index,
+        color_discrete_map={
+            'NORMAL': 'green',
+            'MEDIUM_RISK': 'orange',
+            'HIGH_RISK': 'red',
+        }
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+elif selected_module == "🏭 Production Compliance":
+    st.header("🏭 Production & Inventory Reconciliation")
+    st.markdown("**Detect unauthorized diversion: Input (Molasses) vs Output (Spirit)**")
+    
+    from simulation_engine import get_simulator
+    sim = get_simulator()
+    
+    ledger = sim.generate_production_ledger()
+    
+    # KPIs
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        total_input = ledger['molasses_liters'].sum()
+        st.metric("Total Molasses Input", f"{total_input/1e6:.2f}M L")
+    
+    with col2:
+        total_output = ledger['actual_output'].sum()
+        st.metric("Total Spirit Output", f"{total_output/1e6:.2f}M L")
+    
+    with col3:
+        avg_efficiency = (ledger['actual_output'].sum() / ledger['molasses_liters'].sum()) * 100
+        st.metric("Avg Efficiency", f"{avg_efficiency:.1f}%")
+    
+    with col4:
+        alerts = len(ledger[ledger['alert'] == 'DIVERSION_SUSPECTED'])
+        st.metric("🚨 Diversion Alerts", alerts)
+    
+    st.divider()
+    
+    # Factory Selection
+    factories = sorted(ledger['factory_id'].unique())
+    selected_factory = st.selectbox("Select Factory:", factories)
+    
+    factory_data = ledger[ledger['factory_id'] == selected_factory].sort_values('date')
+    
+    # Trend Chart
+    st.subheader(f"Production Trend: {selected_factory}")
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=factory_data['date'],
+        y=factory_data['theoretical_output'],
+        mode='lines',
+        name='Theoretical Output',
+        line=dict(color='blue', dash='dash')
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=factory_data['date'],
+        y=factory_data['actual_output'],
+        mode='lines+markers',
+        name='Actual Output',
+        line=dict(color='green')
+    ))
+    
+    fig.update_layout(
+        title="Input vs Output (Should be close)",
+        xaxis_title="Date",
+        yaxis_title="Liters",
+        hovermode='x unified'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    st.divider()
+    
+    # Alerts Table
+    st.subheader("⚠️ Anomalies Detected")
+    
+    anomalies = factory_data[factory_data['alert'] == 'DIVERSION_SUSPECTED']
+    
+    if len(anomalies) > 0:
+        st.error(f"🚨 {len(anomalies)} suspicious production records detected!")
+        st.dataframe(
+            anomalies[['date', 'molasses_liters', 'theoretical_output', 'actual_output', 'variance_percent']],
+            use_container_width=True
+        )
+    else:
+        st.success("✅ No diversion alerts for this factory")
+    
+    # Detailed Ledger
+    st.subheader("Full Production Ledger")
+    st.dataframe(factory_data, use_container_width=True)
+
+
+elif selected_module == "✅ Label Authenticity":
+    st.header("✅ QR Code & Label Authenticity Verification")
+    st.markdown("**Verify product authenticity to prevent counterfeits**")
+    
+    from simulation_engine import get_simulator
+    sim = get_simulator()
+    
+    qr_db = sim.generate_qr_database()
+    
+    # Statistics
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        total_batches = len(qr_db)
+        st.metric("Total Batches in DB", total_batches)
+    
+    with col2:
+        valid_batches = len(qr_db[qr_db['is_valid']])
+        st.metric("Valid Batches", valid_batches)
+    
+    with col3:
+        counterfeit = len(qr_db[~qr_db['is_valid']])
+        st.metric("🚨 Counterfeit/Expired", counterfeit)
+    
+    st.divider()
+    
+    # QR Verification
+    st.subheader("🔍 Verify a Product")
+    
+    # Show some sample batch IDs
+    sample_batches = qr_db['batch_id'].head(10).tolist()
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        batch_id = st.text_input(
+            "Enter Batch ID to verify:",
+            value=sample_batches if sample_batches else "BATCH-2024-KA-000001",
+            help=f"Example: {sample_batches if sample_batches else 'BATCH-2024-KA-000001'}"
+        )
+    
+    with col2:
+        verify_btn = st.button("✓ Verify", use_container_width=True)
+    
+    if verify_btn and batch_id:
+        result = sim.verify_qr_code(batch_id, qr_db)
+        
+        if result['is_authentic']:
+            st.success(f"✅ {result['message']}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Batch ID:** {result['batch_id']}")
+                st.write(f"**Factory:** {result['factory_id']}")
+                st.write(f"**Product:** {result['product']}")
+            
+            with col2:
+                st.write(f"**Manufactured:** {result['manufacture_date']}")
+                st.write(f"**Expires:** {result['expiry_date']}")
+                st.write(f"**QR Status:** {result['qr_status']}")
+                st.write(f"**Seal:** {result['seal_status']}")
+        else:
+            st.error(f"❌ {result['message']}")
+            st.warning("⚠️ This product may be counterfeit or expired. Do not consume.")
+    
+    st.divider()
+    
+    # QR Database Explorer
+    st.subheader("📋 QR Database (All Batches)")
+    
+    # Filters
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        selected_factory = st.multiselect(
+            "Filter by Factory:",
+            sorted(qr_db['factory_id'].unique()),
+            default=sorted(qr_db['factory_id'].unique())
+        )
+    
+    with col2:
+        selected_product = st.multiselect(
+            "Filter by Product:",
+            sorted(qr_db['product'].unique()),
+            default=sorted(qr_db['product'].unique())
+        )
+    
+    filtered_qr = qr_db[
+        (qr_db['factory_id'].isin(selected_factory)) &
+        (qr_db['product'].isin(selected_product))
+    ]
+    
+    st.dataframe(filtered_qr, use_container_width=True)
+    
+    # Summary Stats
+    st.subheader("📊 Authenticity Summary")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        status_dist = qr_db['qr_code_status'].value_counts()
+        fig = px.pie(
+            names=status_dist.index,
+            values=status_dist.values,
+            title="QR Code Status Distribution",
+            color_discrete_map={'VALID': 'green', 'COUNTERFEIT': 'red'}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        seal_dist = qr_db['seal_integrity'].value_counts()
+        fig = px.pie(
+            names=seal_dist.index,
+            values=seal_dist.values,
+            title="Seal Integrity Status",
+            color_discrete_map={'OK': 'green', 'BROKEN': 'red'}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
 
 
 # Footer
