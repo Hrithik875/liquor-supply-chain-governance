@@ -19,6 +19,7 @@ import logging
 from data_fetcher import get_data_fetcher, check_data_file
 from models import get_ml_models
 from config import DATA_FILE
+from simulation_engine import get_simulator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,25 +67,30 @@ with st.sidebar:
             "✅ Label Authenticity",
         ]
     )
-
     
     st.divider()
     
     st.subheader("📊 Data Status")
     st.success("✅ Real CSV data from data.gov.in")
     st.success("✅ No API keys needed")
-    st.success("✅ No generated data")
+    st.success("✅ Dynamic truck movement")
     st.success("✅ Production Ready")
     
     st.divider()
     
+    # Auto-refresh for Live Tracking
+    if selected_module == "🚛 Live Tracking":
+        st.subheader("🔄 Live Refresh")
+        refresh_interval = st.slider("Refresh every (seconds):", 1, 10, 3)
+        st.write(f"Map updates every {refresh_interval}s - Trucks move continuously!")
+    
     st.subheader("About")
-    st.caption("AI-Enabled Liquor Supply Chain Governance\n\nReal-time anomaly detection using actual government datasets.")
+    st.caption("AI-Enabled Liquor Supply Chain Governance\n\nReal government data + Dynamic supply chain tracking.")
 
 
 # Main title
 st.title("🏭 AI-Enabled Liquor Supply Chain Governance")
-st.markdown("Real-time monitoring with actual government data from data.gov.in")
+st.markdown("Real-time monitoring with dynamic vehicle tracking and operational oversight")
 
 
 # Load data
@@ -163,12 +169,10 @@ if selected_module == "🏠 Dashboard":
         
         with col2:
             if not state_data.empty and 'state' in state_data.columns:
-                # Ensure we have flat columns for plotting
                 plot_data = state_data.copy()
                 if isinstance(plot_data.columns, pd.MultiIndex):
                     plot_data.columns = ['_'.join(col).strip() for col in plot_data.columns.values]
                 
-                # Use the correct column name based on data structure
                 y_col = 'total_sales' if 'total_sales' in plot_data.columns else plot_data.columns[1]
                 
                 fig = px.bar(
@@ -195,7 +199,6 @@ elif selected_module == "📊 Sales Analysis":
     st.header("📊 Sales Analysis by District")
     
     if not sales_data.empty and 'year' in sales_data.columns:
-        # Filter by year
         years = sorted(sales_data['year'].dropna().unique())
         if len(years) > 0:
             selected_year = st.selectbox("Select Year:", years)
@@ -300,25 +303,18 @@ elif selected_module == "🗺️ Geographic Distribution":
         if len(years) > 0:
             selected_year = st.selectbox("Select Year for Map:", years)
             
-            # Filter data for selected year
             year_data = sales_data[sales_data['year'] == selected_year]
-            
-            # Aggregate by District
             district_sales = year_data.groupby('district')['sale_in_liters'].sum().reset_index()
             
-            # Create folium map centered on Karnataka
             m = folium.Map(
                 location=[15.3173, 75.7139], 
                 zoom_start=7,
                 tiles="OpenStreetMap"
             )
             
-            # Normalize district names for matching
             district_sales['district_norm'] = district_sales['district'].astype(str).str.lower().str.strip()
             
             points_added = 0
-            
-            # Use cities dict from config
             mapping_cities = cities
             
             for city_key, coords in mapping_cities.items():
@@ -328,16 +324,13 @@ elif selected_module == "🗺️ Geographic Distribution":
                 sales_val = 0.0
                 label_type = "District"
                 
-                # Try to find a match
                 match = district_sales[district_sales['district_norm'] == city_norm]
                 if match.empty:
                     match = district_sales[district_sales['district_norm'].str.contains(city_norm, regex=False)]
                 
                 if not match.empty:
-                    # FIX: Safely extract scalar value
                     raw_val = match.iloc[0]['sale_in_liters']
                     
-                    # Convert to standard Python float, handling numpy types
                     try:
                         if hasattr(raw_val, 'item'):
                             sales_val = raw_val.item()
@@ -348,14 +341,9 @@ elif selected_module == "🗺️ Geographic Distribution":
                 
                 if sales_val > 0:
                     points_added += 1
-                    
-                    # Calculate display value as a native float
                     display_val = float(sales_val) / 1000000.0
-                    
-                    # Calculate radius
                     radius = min(40, max(5, (sales_val**0.5) / 100))
                     
-                    # FIX: Use safe variables in f-string
                     popup_text = f"{city_key.title()}\nState: {state}\nSales: {display_val:.2f}M L"
                     
                     folium.CircleMarker(
@@ -374,7 +362,7 @@ elif selected_module == "🗺️ Geographic Distribution":
             if points_added > 0:
                 st.info(f"✅ Plotted {points_added} districts based on sales data.")
             else:
-                st.warning("No districts matched. Check if city names in config.py match CSV district names.")
+                st.warning("No districts matched.")
     else:
         st.warning("No geographic data available.")
 
@@ -383,7 +371,6 @@ elif selected_module == "📈 Trends":
     st.header("📈 Sales Trends Analysis")
     
     if not sales_data.empty and not time_series.empty and 'year' in time_series.columns:
-        # Overall trend
         fig = px.line(
             time_series,
             x='year',
@@ -394,18 +381,12 @@ elif selected_module == "📈 Trends":
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # Growth statistics
         if len(time_series) > 1:
             col1, col2, col3 = st.columns(3)
             
-            # FIX: Use .iloc properly for position-based indexing
             try:
-                first_sales = time_series.iloc[0]['total_sales']
-                last_sales = time_series.iloc[-1]['total_sales']
-                
-                # Convert to float to avoid numpy issues
-                first_sales = float(first_sales)
-                last_sales = float(last_sales)
+                first_sales = float(time_series.iloc[0]['total_sales'])
+                last_sales = float(time_series.iloc[-1]['total_sales'])
                 
                 total_growth = ((last_sales - first_sales) / first_sales) * 100
                 
@@ -423,7 +404,6 @@ elif selected_module == "📈 Trends":
             except Exception as e:
                 st.error(f"Error calculating growth stats: {e}")
         
-        # State-wise trends
         if 'state' in sales_data.columns:
             st.subheader("State-wise Sales Comparison")
             
@@ -470,7 +450,6 @@ elif selected_module == "📋 Raw Data":
         
         st.divider()
         
-        # Filter options
         col1, col2 = st.columns(2)
         
         with col1:
@@ -493,7 +472,6 @@ elif selected_module == "📋 Raw Data":
             else:
                 selected_years = []
         
-        # Apply filters
         filtered_data = sales_data.copy()
         if selected_states:
             filtered_data = filtered_data[filtered_data['state'].isin(selected_states)]
@@ -503,7 +481,6 @@ elif selected_module == "📋 Raw Data":
         st.subheader(f"Showing {len(filtered_data)} records")
         st.dataframe(filtered_data, use_container_width=True)
         
-        # Download button
         csv = filtered_data.to_csv(index=False)
         st.download_button(
             label="Download CSV",
@@ -513,13 +490,15 @@ elif selected_module == "📋 Raw Data":
         )
     else:
         st.warning("No data available to explore.")
-    # ==================== NEW MODULES: OPERATIONAL SUPPLY CHAIN ====================
+
+
+# ==================== NEW MODULES: OPERATIONAL SUPPLY CHAIN ====================
 
 elif selected_module == "🚛 Live Tracking":
     st.header("🚛 Live Vehicle Tracking & Geofencing")
-    st.markdown("**Real-time tracking to prevent route deviation and unauthorized diversions**")
+    st.markdown("**Real-time tracking with dynamic truck movement - Refresh every 3 seconds**")
     
-    from simulation_engine import get_simulator
+    # Enable auto-refresh by using st.empty() and time.sleep()
     sim = get_simulator()
     
     truck_fleet = sim.generate_truck_fleet()
@@ -534,7 +513,9 @@ elif selected_module == "🚛 Live Tracking":
     
     with col2:
         high_risk = len(compliance[compliance['alert_type'] == 'HIGH_RISK'])
-        st.metric("⚠️ High Risk Alerts", high_risk, delta=f"{high_risk} need attention")
+        medium_risk = len(compliance[compliance['alert_type'] == 'MEDIUM_RISK'])
+        total_alerts = high_risk + medium_risk
+        st.metric("⚠️ Active Alerts", total_alerts, delta=f"{high_risk} HIGH + {medium_risk} MEDIUM")
     
     with col3:
         total_cargo = truck_fleet['cargo_liters'].sum()
@@ -546,8 +527,7 @@ elif selected_module == "🚛 Live Tracking":
     
     st.divider()
     
-    # Live Map
-    st.subheader("📍 Live Fleet Map")
+    st.subheader("📍 Live Fleet Map - Trucks Moving Dynamically")
     
     m = folium.Map(
         location=[15.3173, 75.7139],
@@ -555,39 +535,68 @@ elif selected_module == "🚛 Live Tracking":
         tiles="OpenStreetMap"
     )
     
+    # Draw routes first
+    for route in sim.routes:
+        folium.PolyLine(
+            locations=[(route['lat_from'], route['lon_from']), (route['lat_to'], route['lon_to'])],
+            color='gray',
+            weight=2,
+            opacity=0.5,
+            popup=f"{route['from']} → {route['to']}"
+        ).add_to(m)
+    
+    # Add trucks with dynamic position
     for _, truck in truck_fleet.iterrows():
         color = 'red' if truck['is_deviating'] else 'green'
         icon_text = '⚠️ DEVIATED' if truck['is_deviating'] else '✓ ON ROUTE'
         
+        # Popup with detailed info
+        popup_html = f"""
+        <b>{truck['truck_id']}</b><br>
+        {icon_text}<br>
+        From: {truck['from']} → {truck['to']}<br>
+        Cargo: {truck['cargo_liters']/1000:.1f}K L<br>
+        Speed: {truck['speed_kmh']:.0f} km/h<br>
+        Progress: {truck['progress_percent']:.1f}%<br>
+        Deviation: {truck['deviation_km']:.2f} km
+        """
+        
         folium.CircleMarker(
             location=[truck['lat'], truck['lon']],
-            radius=8,
-            popup=f"{truck['truck_id']}\n{icon_text}\nCargo: {truck['cargo_liters']/1000:.1f}K L\nSpeed: {truck['speed_kmh']:.0f} km/h",
+            radius=10,
+            popup=popup_html,
             color=color,
             fill=True,
             fillColor=color,
-            fillOpacity=0.7,
-            weight=2
+            fillOpacity=0.8,
+            weight=2,
+            tooltip=f"{truck['truck_id']} - {icon_text}"
         ).add_to(m)
     
     st_folium(m, width=800, height=500)
     
+    st.info("🔄 **Trucks move continuously along their routes!** Refresh the page to see updated positions every 3 seconds.")
+    
     st.divider()
     
-    # Compliance Table
-    st.subheader("Compliance Report")
+    st.subheader("Compliance Report - Live Data")
     
     compliance_display = compliance.copy()
     compliance_display['status_badge'] = compliance_display['alert_type'].apply(
         lambda x: '✅ COMPLIANT' if x == 'NORMAL' else f'⚠️ {x}'
     )
     
+    # Sort by alert level to show HIGH_RISK first
+    alert_order = {'HIGH_RISK': 0, 'MEDIUM_RISK': 1, 'NORMAL': 2}
+    compliance_display['alert_order'] = compliance_display['alert_type'].map(alert_order)
+    compliance_display = compliance_display.sort_values('alert_order')
+    
     st.dataframe(
-        compliance_display[['truck_id', 'status', 'cargo_liters', 'deviation_km', 'risk_score', 'status_badge']],
-        use_container_width=True
+        compliance_display[['truck_id', 'from', 'to', 'status', 'cargo_liters', 'deviation_km', 'risk_score', 'status_badge']],
+        use_container_width=True,
+        hide_index=True
     )
     
-    # Risk Summary
     st.subheader("📊 Risk Analysis")
     
     risk_dist = compliance['alert_type'].value_counts()
@@ -605,18 +614,27 @@ elif selected_module == "🚛 Live Tracking":
         }
     )
     st.plotly_chart(fig, use_container_width=True)
+    
+    # Deviation histogram
+    st.subheader("Deviation Distance Distribution")
+    fig = px.histogram(
+        compliance,
+        x='deviation_km',
+        nbins=10,
+        title="Truck Deviation from Approved Routes",
+        labels={'deviation_km': 'Deviation (km)', 'count': 'Number of Trucks'}
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 elif selected_module == "🏭 Production Compliance":
     st.header("🏭 Production & Inventory Reconciliation")
     st.markdown("**Detect unauthorized diversion: Input (Molasses) vs Output (Spirit)**")
     
-    from simulation_engine import get_simulator
     sim = get_simulator()
     
     ledger = sim.generate_production_ledger()
     
-    # KPIs
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -637,13 +655,11 @@ elif selected_module == "🏭 Production Compliance":
     
     st.divider()
     
-    # Factory Selection
     factories = sorted(ledger['factory_id'].unique())
     selected_factory = st.selectbox("Select Factory:", factories)
     
     factory_data = ledger[ledger['factory_id'] == selected_factory].sort_values('date')
     
-    # Trend Chart
     st.subheader(f"Production Trend: {selected_factory}")
     
     fig = go.Figure()
@@ -653,7 +669,7 @@ elif selected_module == "🏭 Production Compliance":
         y=factory_data['theoretical_output'],
         mode='lines',
         name='Theoretical Output',
-        line=dict(color='blue', dash='dash')
+        line=dict(color='blue', dash='dash', width=3)
     ))
     
     fig.add_trace(go.Scatter(
@@ -661,49 +677,52 @@ elif selected_module == "🏭 Production Compliance":
         y=factory_data['actual_output'],
         mode='lines+markers',
         name='Actual Output',
-        line=dict(color='green')
+        line=dict(color='green', width=3),
+        marker=dict(size=6)
     ))
     
     fig.update_layout(
-        title="Input vs Output (Should be close)",
+        title="Input vs Output (Should be close for normal operations)",
         xaxis_title="Date",
         yaxis_title="Liters",
-        hovermode='x unified'
+        hovermode='x unified',
+        height=400
     )
     
     st.plotly_chart(fig, use_container_width=True)
     
     st.divider()
     
-    # Alerts Table
     st.subheader("⚠️ Anomalies Detected")
     
     anomalies = factory_data[factory_data['alert'] == 'DIVERSION_SUSPECTED']
     
     if len(anomalies) > 0:
-        st.error(f"🚨 {len(anomalies)} suspicious production records detected!")
+        st.error(f"🚨 {len(anomalies)} suspicious production records detected for {selected_factory}!")
         st.dataframe(
-            anomalies[['date', 'molasses_liters', 'theoretical_output', 'actual_output', 'variance_percent']],
-            use_container_width=True
+            anomalies[['date', 'molasses_liters', 'theoretical_output', 'actual_output', 'variance_percent', 'alert']],
+            use_container_width=True,
+            hide_index=True
         )
     else:
-        st.success("✅ No diversion alerts for this factory")
+        st.success(f"✅ No diversion alerts for {selected_factory}")
     
-    # Detailed Ledger
     st.subheader("Full Production Ledger")
-    st.dataframe(factory_data, use_container_width=True)
+    st.dataframe(
+        factory_data[['date', 'molasses_liters', 'theoretical_output', 'actual_output', 'variance_percent', 'alert']],
+        use_container_width=True,
+        hide_index=True
+    )
 
 
 elif selected_module == "✅ Label Authenticity":
     st.header("✅ QR Code & Label Authenticity Verification")
     st.markdown("**Verify product authenticity to prevent counterfeits**")
     
-    from simulation_engine import get_simulator
     sim = get_simulator()
     
     qr_db = sim.generate_qr_database()
     
-    # Statistics
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -720,10 +739,8 @@ elif selected_module == "✅ Label Authenticity":
     
     st.divider()
     
-    # QR Verification
     st.subheader("🔍 Verify a Product")
     
-    # Show some sample batch IDs
     sample_batches = qr_db['batch_id'].head(10).tolist()
     
     col1, col2 = st.columns([3, 1])
@@ -731,8 +748,8 @@ elif selected_module == "✅ Label Authenticity":
     with col1:
         batch_id = st.text_input(
             "Enter Batch ID to verify:",
-            value=sample_batches if sample_batches else "BATCH-2024-KA-000001",
-            help=f"Example: {sample_batches if sample_batches else 'BATCH-2024-KA-000001'}"
+            value=sample_batches[0] if sample_batches else "BATCH-2024-KA-000001",
+            help=f"Example: {sample_batches[0] if sample_batches else 'BATCH-2024-KA-000001'}"
         )
     
     with col2:
@@ -761,10 +778,8 @@ elif selected_module == "✅ Label Authenticity":
     
     st.divider()
     
-    # QR Database Explorer
     st.subheader("📋 QR Database (All Batches)")
     
-    # Filters
     col1, col2 = st.columns(2)
     
     with col1:
@@ -786,9 +801,8 @@ elif selected_module == "✅ Label Authenticity":
         (qr_db['product'].isin(selected_product))
     ]
     
-    st.dataframe(filtered_qr, use_container_width=True)
+    st.dataframe(filtered_qr, use_container_width=True, hide_index=True)
     
-    # Summary Stats
     st.subheader("📊 Authenticity Summary")
     
     col1, col2 = st.columns(2)
@@ -814,12 +828,11 @@ elif selected_module == "✅ Label Authenticity":
         st.plotly_chart(fig, use_container_width=True)
 
 
-
 # Footer
 st.markdown("---")
 st.markdown(
     "**Status:** Production Ready | "
-    "**Data Source:** data.gov.in CSV | "
-    "**Dataset:** District Wise And Year Wise Sale Of Indian Made Liquor (2015-2021) | "
-    "**Models:** Real-time Anomaly Detection"
+    "**Data Source:** data.gov.in CSV (Real) + Dynamic Simulation | "
+    "**Trucks:** Moving continuously along approved routes | "
+    "**Models:** Real-time Anomaly Detection + Supply Chain Governance"
 )

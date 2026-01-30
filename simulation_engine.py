@@ -14,85 +14,123 @@ class SupplyChainSimulator:
         self.num_trucks = num_trucks
         self.num_batches = num_batches
         np.random.seed(42)
-    
-    # ==================== 🚛 LOGISTICS & GEOFENCING ====================
-    
-    @st.cache_data(ttl=3600)
-    def generate_truck_fleet(_self):
-        """Generate a fleet of trucks with routes"""
-        trucks = []
-        
-        routes = [
+        self.routes = [
             {'from': 'Bengaluru', 'to': 'Mysore', 'distance': 140, 'lat_from': 12.9716, 'lon_from': 77.5946, 'lat_to': 12.2958, 'lon_to': 76.6394},
             {'from': 'Bengaluru', 'to': 'Tumkur', 'distance': 70, 'lat_from': 12.9716, 'lon_from': 77.5946, 'lat_to': 13.3392, 'lon_to': 77.1017},
             {'from': 'Bengaluru', 'to': 'Hassan', 'distance': 187, 'lat_from': 12.9716, 'lon_from': 77.5946, 'lat_to': 13.0033, 'lon_to': 76.1004},
             {'from': 'Bengaluru', 'to': 'Mangalore', 'distance': 350, 'lat_from': 12.9716, 'lon_from': 77.5946, 'lat_to': 12.9141, 'lon_to': 74.8560},
             {'from': 'Hubli', 'to': 'Belgaum', 'distance': 110, 'lat_from': 15.3647, 'lon_from': 75.1240, 'lat_to': 15.8497, 'lon_to': 74.4977},
         ]
+    
+    # ==================== 🚛 LOGISTICS & GEOFENCING ====================
+    
+    @st.cache_data(ttl=60)  # Cache for 60 seconds to allow smooth updates
+    def generate_truck_fleet(_self):
+        """Generate a fleet of trucks with dynamic positions along routes"""
+        trucks = []
         
         for i in range(_self.num_trucks):
-            route = routes[i % len(routes)]
+            route = _self.routes[i % len(_self.routes)]
             
-            # Current position (0-100% along the route)
-            progress = np.random.uniform(0, 1)
+            # Time-based progress: Each truck moves continuously along its route
+            # Use current time to calculate position (smooth animation)
+            current_time = datetime.now()
+            time_seconds = current_time.hour * 3600 + current_time.minute * 60 + current_time.second
+            
+            # Each truck completes a round trip in ~4 hours (14400 seconds)
+            # This creates continuous movement
+            cycle_time = time_seconds % 14400
+            
+            # Progress 0-1 along the route (goes 0->1->0 for round trip)
+            if cycle_time < 7200:  # First half: 0 to 1
+                progress = cycle_time / 7200.0
+            else:  # Second half: 1 to 0 (return journey)
+                progress = (14400 - cycle_time) / 7200.0
+            
+            # Calculate interpolated position along the route
             current_lat = route['lat_from'] + (route['lat_to'] - route['lat_from']) * progress
             current_lon = route['lon_from'] + (route['lon_to'] - route['lon_from']) * progress
             
-            # Simulate deviations (some trucks go off-route)
+            # Calculate deviation: Some trucks deviate slightly from route
+            # Deviation creates a random jitter perpendicular to route
             is_deviating = np.random.random() < 0.15  # 15% chance of deviation
             
             if is_deviating:
-                current_lat += np.random.normal(0, 0.05)
-                current_lon += np.random.normal(0, 0.05)
+                # Deviation perpendicular to route (creates left/right deviation)
+                deviation_lat = np.random.normal(0, 0.08)  # Larger deviation
+                deviation_lon = np.random.normal(0, 0.08)
+                current_lat += deviation_lat
+                current_lon += deviation_lon
+                deviation_km = np.sqrt((deviation_lat * 111)**2 + (deviation_lon * 111 * np.cos(np.radians(current_lat)))**2)
+            else:
+                deviation_km = 0.0
+            
+            # Calculate speed based on progress
+            # Truck speeds up in middle of journey, slows near destinations
+            speed_base = 80 if np.random.random() > 0.3 else 0
+            if progress < 0.1 or progress > 0.9:
+                speed_variation = speed_base * 0.6  # Slower at start/end
+            else:
+                speed_variation = speed_base  # Normal speed in middle
             
             truck = {
                 'truck_id': f'TRK-KA-{i+1:04d}',
-                'status': 'In Transit' if np.random.random() > 0.2 else 'Idle',
+                'status': 'In Transit' if speed_variation > 0 else 'Parked',
                 'from': route['from'],
                 'to': route['to'],
                 'lat': current_lat,
                 'lon': current_lon,
-                'speed_kmh': np.random.uniform(40, 90) if np.random.random() > 0.3 else 0,
+                'speed_kmh': speed_variation,
                 'cargo_liters': np.random.randint(5000, 25000),
                 'progress_percent': progress * 100,
-                'deviation_km': np.random.uniform(0, 15) if is_deviating else 0,
+                'deviation_km': deviation_km,
                 'is_deviating': is_deviating,
-                'last_ping': datetime.now() - timedelta(minutes=np.random.randint(1, 120)),
+                'last_ping': datetime.now() - timedelta(seconds=np.random.randint(5, 30)),
+                'route_index': i % len(_self.routes),
             }
             trucks.append(truck)
         
-        logger.info(f"✓ Generated {len(trucks)} trucks")
+        logger.info(f"✓ Generated {len(trucks)} trucks at time {current_time.strftime('%H:%M:%S')}")
         return pd.DataFrame(trucks)
     
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=60)
     def calculate_route_compliance(_self, truck_df):
         """Calculate which trucks deviate from approved routes"""
         results = []
+        
+        deviating_count = 0
         
         for _, truck in truck_df.iterrows():
             # Deviation threshold: >10km is suspicious
             is_compliant = truck['deviation_km'] < 10
             
+            # Risk calculation: Higher deviation = higher risk
             risk_score = min(100, (truck['deviation_km'] / 20) * 100)
             
+            # Alert classification
             alert_type = 'NORMAL'
             if truck['is_deviating'] and truck['deviation_km'] > 15:
                 alert_type = 'HIGH_RISK'
+                deviating_count += 1
             elif truck['is_deviating'] and truck['deviation_km'] > 10:
                 alert_type = 'MEDIUM_RISK'
+                deviating_count += 1
             
             results.append({
                 'truck_id': truck['truck_id'],
                 'is_compliant': is_compliant,
-                'deviation_km': truck['deviation_km'],
-                'risk_score': risk_score,
+                'deviation_km': float(truck['deviation_km']),
+                'risk_score': float(risk_score),
                 'alert_type': alert_type,
                 'status': truck['status'],
-                'cargo_liters': truck['cargo_liters'],
-                'speed_kmh': truck['speed_kmh'],
+                'cargo_liters': int(truck['cargo_liters']),
+                'speed_kmh': float(truck['speed_kmh']),
+                'from': truck['from'],
+                'to': truck['to'],
+                'progress_percent': float(truck['progress_percent']),
             })
         
-        logger.info(f"✓ Calculated compliance for {len(results)} trucks")
+        logger.info(f"✓ Calculated compliance: {deviating_count} trucks with alerts")
         return pd.DataFrame(results)
     
     # ==================== 🏭 PRODUCTION & INVENTORY ====================
@@ -158,7 +196,7 @@ class SupplyChainSimulator:
             factory = np.random.choice(factories)
             product = np.random.choice(products)
             
-            batch_id = f"BATCH-2024-{factory.split('_')}-{i+1:06d}"
+            batch_id = f"BATCH-2024-{factory.split('_')[1]}-{i+1:06d}"
             manufacture_date = datetime.now() - timedelta(days=np.random.randint(1, 180))
             expiry_date = manufacture_date + timedelta(days=365*5)  # 5-year shelf life
             
@@ -190,7 +228,7 @@ class SupplyChainSimulator:
                 'is_authentic': False,
             }
         
-        record = match.iloc
+        record = match.iloc[0]
         
         is_authentic = (
             record['is_valid'] and 
@@ -216,5 +254,3 @@ class SupplyChainSimulator:
 @st.cache_resource
 def get_simulator():
     return SupplyChainSimulator()
-
-simulator = get_simulator()
